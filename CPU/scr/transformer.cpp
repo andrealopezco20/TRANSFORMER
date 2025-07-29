@@ -373,3 +373,116 @@ void FeedForward::clip_gradients(double max_norm) {
     grad_1.clip(max_norm);
     grad_2.clip(max_norm);
 }
+
+
+
+// ============================================================================
+// LAYER NORMALIZATION IMPLEMENTATION
+// ============================================================================
+
+LayerNorm::LayerNorm(int d_model, double eps) : d_model(d_model), eps(eps) {
+    gamma = Matrix(1, d_model);
+    beta = Matrix(1, d_model);
+    grad_gamma = Matrix(1, d_model);
+    grad_beta = Matrix(1, d_model);
+    
+    // Initialize gamma to 1, beta to 0
+    for (int j = 0; j < d_model; j++) {
+        gamma.data[0][j] = 1.0;
+        beta.data[0][j] = 0.0;
+    }
+    
+    grad_gamma.zero();
+    grad_beta.zero();
+}
+
+Matrix LayerNorm::forward(const Matrix& input) {
+    input_cache = input;
+    Matrix result(input.rows, input.cols);
+    
+    mean_cache = Matrix(input.rows, 1);
+    std_cache = Matrix(input.rows, 1);
+    normalized_cache = Matrix(input.rows, input.cols);
+    
+    for (int i = 0; i < input.rows; i++) {
+        // Compute mean
+        double mean = 0.0;
+        for (int j = 0; j < input.cols; j++) {
+            mean += input.data[i][j];
+        }
+        mean /= input.cols;
+        mean_cache.data[i][0] = mean;
+        
+        // Compute variance
+        double variance = 0.0;
+        for (int j = 0; j < input.cols; j++) {
+            double diff = input.data[i][j] - mean;
+            variance += diff * diff;
+        }
+        variance /= input.cols;
+        double std_dev = sqrt(variance + eps);
+        std_cache.data[i][0] = std_dev;
+        
+        // Normalize and scale
+        for (int j = 0; j < input.cols; j++) {
+            double normalized = (input.data[i][j] - mean) / std_dev;
+            normalized_cache.data[i][j] = normalized;
+            result.data[i][j] = normalized * gamma.data[0][j] + beta.data[0][j];
+        }
+    }
+    
+    return result;
+}
+
+Matrix LayerNorm::backward(const Matrix& grad_output) {
+    Matrix grad_input(input_cache.rows, input_cache.cols);
+    
+    for (int i = 0; i < input_cache.rows; i++) {
+        double mean = mean_cache.data[i][0];
+        double std_dev = std_cache.data[i][0];
+        int N = input_cache.cols;
+        
+        // Accumulate gradients for gamma and beta
+        for (int j = 0; j < input_cache.cols; j++) {
+            grad_gamma.data[0][j] += grad_output.data[i][j] * normalized_cache.data[i][j];
+            grad_beta.data[0][j] += grad_output.data[i][j];
+        }
+        
+        // Compute gradient w.r.t input (proper chain rule)
+        double grad_var = 0.0;
+        for (int j = 0; j < N; j++) {
+            grad_var += grad_output.data[i][j] * gamma.data[0][j] * 
+                       (input_cache.data[i][j] - mean) * (-0.5) * pow(std_dev, -3);
+        }
+        
+        double grad_mean = 0.0;
+        for (int j = 0; j < N; j++) {
+            grad_mean += grad_output.data[i][j] * gamma.data[0][j] * (-1.0 / std_dev);
+        }
+        grad_mean += grad_var * (-2.0 / N) * 
+                    std::accumulate(input_cache.data[i].begin(), input_cache.data[i].end(), 0.0) / N;
+        
+        for (int j = 0; j < N; j++) {
+            grad_input.data[i][j] = grad_output.data[i][j] * gamma.data[0][j] / std_dev +
+                                   grad_var * 2.0 * (input_cache.data[i][j] - mean) / N +
+                                   grad_mean / N;
+        }
+    }
+    
+    return grad_input;
+}
+
+void LayerNorm::update_weights(double learning_rate) {
+    gamma.subtract_inplace(grad_gamma * learning_rate);
+    beta.subtract_inplace(grad_beta * learning_rate);
+}
+
+void LayerNorm::update_weights_adam(AdamOptimizer& optimizer, int step) {
+    optimizer.update(gamma, grad_gamma, &gamma, step, 0.001);
+    optimizer.update(beta, grad_beta, &beta, step, 0.001);
+}
+
+void LayerNorm::zero_gradients() {
+    grad_gamma.zero();
+    grad_beta.zero();
+}
