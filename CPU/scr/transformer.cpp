@@ -761,3 +761,82 @@ void TransformerDecoderLayer::scale_gradients(double scale_factor) {
     norm3->grad_gamma.multiply_inplace(scale_factor);
     norm3->grad_beta.multiply_inplace(scale_factor);
 }
+
+
+// ============================================================================
+// ADAM OPTIMIZER IMPLEMENTATION
+// ============================================================================
+
+AdamOptimizer::AdamOptimizer(double beta1, double beta2, double eps) 
+    : beta1(beta1), beta2(beta2), eps(eps) {}
+
+void AdamOptimizer::update(Matrix& weight, const Matrix& gradient, void* param_id, int step, double learning_rate) {
+    // Initialize momentum matrices if not present
+    if (m_weights.find(param_id) == m_weights.end()) {
+        m_weights[param_id] = Matrix(weight.rows, weight.cols);
+        v_weights[param_id] = Matrix(weight.rows, weight.cols);
+        m_weights[param_id].zero();
+        v_weights[param_id].zero();
+    }
+    
+    Matrix& m = m_weights[param_id];
+    Matrix& v = v_weights[param_id];
+    
+    // Update biased first moment estimate
+    for (int i = 0; i < weight.rows; i++) {
+        for (int j = 0; j < weight.cols; j++) {
+            m.data[i][j] = beta1 * m.data[i][j] + (1.0 - beta1) * gradient.data[i][j];
+        }
+    }
+    
+    // Update biased second raw moment estimate
+    for (int i = 0; i < weight.rows; i++) {
+        for (int j = 0; j < weight.cols; j++) {
+            v.data[i][j] = beta2 * v.data[i][j] + (1.0 - beta2) * gradient.data[i][j] * gradient.data[i][j];
+        }
+    }
+    
+    // Compute bias-corrected first and second moment estimates
+    double bias_correction1 = 1.0 - pow(beta1, step);
+    double bias_correction2 = 1.0 - pow(beta2, step);
+    
+    // Update weights
+    for (int i = 0; i < weight.rows; i++) {
+        for (int j = 0; j < weight.cols; j++) {
+            double m_hat = m.data[i][j] / bias_correction1;
+            double v_hat = v.data[i][j] / bias_correction2;
+            weight.data[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + eps);
+        }
+    }
+}
+
+void AdamOptimizer::clear() {
+    m_weights.clear();
+    v_weights.clear();
+    m_biases.clear();
+    v_biases.clear();
+}
+
+// ============================================================================
+// LEARNING RATE SCHEDULER IMPLEMENTATION
+// ============================================================================
+
+LRScheduler::LRScheduler(double initial_lr, double decay_factor, int decay_steps) 
+    : initial_lr(initial_lr), decay_factor(decay_factor), decay_steps(decay_steps) {}
+
+double LRScheduler::get_lr(int step) const {
+    int decay_count = step / decay_steps;
+    return initial_lr * pow(decay_factor, decay_count);
+}
+
+double LRScheduler::cosine_annealing(int step, int max_steps) const {
+    return initial_lr * 0.5 * (1.0 + cos(M_PI * step / max_steps));
+}
+
+double LRScheduler::warmup_cosine(int step, int warmup_steps, int max_steps) const {
+    if (step < warmup_steps) {
+        return initial_lr * step / warmup_steps;
+    } else {
+        return cosine_annealing(step - warmup_steps, max_steps - warmup_steps);
+    }
+}
