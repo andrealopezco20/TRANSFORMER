@@ -601,3 +601,163 @@ void TransformerEncoderLayer::scale_gradients(double scale_factor) {
     norm2->grad_gamma.multiply_inplace(scale_factor);
     norm2->grad_beta.multiply_inplace(scale_factor);
 }
+
+
+
+// ============================================================================
+// TRANSFORMER DECODER LAYER IMPLEMENTATION
+// ============================================================================
+
+TransformerDecoderLayer::TransformerDecoderLayer(int d_model, int num_heads, int d_ff, double dropout_rate)
+    : dropout_rate(dropout_rate) {
+    
+    self_attention = std::make_unique<MultiHeadAttention>(d_model, num_heads);
+    cross_attention = std::make_unique<MultiHeadAttention>(d_model, num_heads);
+    feed_forward = std::make_unique<FeedForward>(d_model, d_ff);
+    norm1 = std::make_unique<LayerNorm>(d_model);
+    norm2 = std::make_unique<LayerNorm>(d_model);
+    norm3 = std::make_unique<LayerNorm>(d_model);
+}
+
+Matrix TransformerDecoderLayer::forward(const Matrix& input, const Matrix& encoder_output, bool training) {
+    input_cache = input;
+    encoder_cache = encoder_output;
+    
+    // Self-attention with masking
+    Matrix self_att_out = self_attention->forward(input, input, input, true);
+    self_att_cache = self_att_out;
+    
+    Matrix residual1 = input + self_att_out;
+    Matrix norm1_out = norm1->forward(residual1);
+    norm1_cache = norm1_out;
+    
+    // Cross-attention with encoder output
+    Matrix cross_att_out = cross_attention->forward(norm1_out, encoder_output, encoder_output, false);
+    cross_att_cache = cross_att_out;
+    
+    Matrix residual2 = norm1_out + cross_att_out;
+    Matrix norm2_out = norm2->forward(residual2);
+    norm2_cache = norm2_out;
+    
+    // Feed forward
+    Matrix ff_out = feed_forward->forward(norm2_out);
+    ff_cache = ff_out;
+    
+    Matrix residual3 = norm2_out + ff_out;
+    Matrix output = norm3->forward(residual3);
+    
+    return output;
+}
+
+std::pair<Matrix, Matrix> TransformerDecoderLayer::backward(const Matrix& grad_output) {
+    // Backward through third layer norm
+    Matrix grad_residual3 = norm3->backward(grad_output);
+    
+    // Split for residual connection
+    Matrix grad_norm2_out = grad_residual3;
+    Matrix grad_ff_out = grad_residual3;
+    
+    // Backward through feed forward
+    Matrix grad_ff_input = feed_forward->backward(grad_ff_out);
+    grad_norm2_out.add_inplace(grad_ff_input);
+    
+    // Backward through second layer norm
+    Matrix grad_residual2 = norm2->backward(grad_norm2_out);
+    
+    // Split for residual connection
+    Matrix grad_norm1_out = grad_residual2;
+    Matrix grad_cross_att_out = grad_residual2;
+    
+    // Backward through cross attention - CORREGIDO
+    std::tuple<Matrix, Matrix, Matrix> grad_cross_result = cross_attention->backward(grad_cross_att_out);
+    Matrix grad_q_cross = std::get<0>(grad_cross_result);
+    Matrix grad_k_cross = std::get<1>(grad_cross_result);
+    Matrix grad_v_cross = std::get<2>(grad_cross_result);
+    
+    grad_norm1_out.add_inplace(grad_q_cross);
+    Matrix grad_encoder_output = grad_k_cross + grad_v_cross;
+    
+    // Backward through first layer norm
+    Matrix grad_residual1 = norm1->backward(grad_norm1_out);
+    
+    // Split for residual connection
+    Matrix grad_input = grad_residual1;
+    Matrix grad_self_att_out = grad_residual1;
+    
+    // Backward through self attention - CORREGIDO
+    std::tuple<Matrix, Matrix, Matrix> grad_self_result = self_attention->backward(grad_self_att_out);
+    Matrix grad_q_self = std::get<0>(grad_self_result);
+    Matrix grad_k_self = std::get<1>(grad_self_result);
+    Matrix grad_v_self = std::get<2>(grad_self_result);
+    
+    grad_input.add_inplace(grad_q_self);
+    
+    return std::make_pair(grad_input, grad_encoder_output);
+}
+
+void TransformerDecoderLayer::update_weights(double learning_rate) {
+    self_attention->update_weights(learning_rate);
+    cross_attention->update_weights(learning_rate);
+    feed_forward->update_weights(learning_rate);
+    norm1->update_weights(learning_rate);
+    norm2->update_weights(learning_rate);
+    norm3->update_weights(learning_rate);
+}
+
+void TransformerDecoderLayer::update_weights_adam(AdamOptimizer& optimizer, int step) {
+    self_attention->update_weights_adam(optimizer, step);
+    cross_attention->update_weights_adam(optimizer, step);
+    feed_forward->update_weights_adam(optimizer, step);
+    norm1->update_weights_adam(optimizer, step);
+    norm2->update_weights_adam(optimizer, step);
+    norm3->update_weights_adam(optimizer, step);
+}
+
+void TransformerDecoderLayer::zero_gradients() {
+    self_attention->zero_gradients();
+    cross_attention->zero_gradients();
+    feed_forward->zero_gradients();
+    norm1->zero_gradients();
+    norm2->zero_gradients();
+    norm3->zero_gradients();
+}
+
+void TransformerDecoderLayer::clip_gradients(double max_norm) {
+    self_attention->clip_gradients(max_norm);
+    cross_attention->clip_gradients(max_norm);
+    feed_forward->clip_gradients(max_norm);
+}
+
+void TransformerDecoderLayer::scale_gradients(double scale_factor) {
+    self_attention->grad_q.dW.multiply_inplace(scale_factor);
+    self_attention->grad_k.dW.multiply_inplace(scale_factor);
+    self_attention->grad_v.dW.multiply_inplace(scale_factor);
+    self_attention->grad_o.dW.multiply_inplace(scale_factor);
+    
+    self_attention->grad_q.db.multiply_inplace(scale_factor);
+    self_attention->grad_k.db.multiply_inplace(scale_factor);
+    self_attention->grad_v.db.multiply_inplace(scale_factor);
+    self_attention->grad_o.db.multiply_inplace(scale_factor);
+    
+    cross_attention->grad_q.dW.multiply_inplace(scale_factor);
+    cross_attention->grad_k.dW.multiply_inplace(scale_factor);
+    cross_attention->grad_v.dW.multiply_inplace(scale_factor);
+    cross_attention->grad_o.dW.multiply_inplace(scale_factor);
+    
+    cross_attention->grad_q.db.multiply_inplace(scale_factor);
+    cross_attention->grad_k.db.multiply_inplace(scale_factor);
+    cross_attention->grad_v.db.multiply_inplace(scale_factor);
+    cross_attention->grad_o.db.multiply_inplace(scale_factor);
+    
+    feed_forward->grad_1.dW.multiply_inplace(scale_factor);
+    feed_forward->grad_2.dW.multiply_inplace(scale_factor);
+    feed_forward->grad_1.db.multiply_inplace(scale_factor);
+    feed_forward->grad_2.db.multiply_inplace(scale_factor);
+    
+    norm1->grad_gamma.multiply_inplace(scale_factor);
+    norm1->grad_beta.multiply_inplace(scale_factor);
+    norm2->grad_gamma.multiply_inplace(scale_factor);
+    norm2->grad_beta.multiply_inplace(scale_factor);
+    norm3->grad_gamma.multiply_inplace(scale_factor);
+    norm3->grad_beta.multiply_inplace(scale_factor);
+}
