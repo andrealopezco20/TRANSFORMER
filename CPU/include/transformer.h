@@ -6,7 +6,6 @@
 #include <vector>
 #include <unordered_map>
 
-// Forward declarations
 class AdamOptimizer;
 
 // Cache para activaciones durante forward pass
