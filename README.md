@@ -1253,4 +1253,3 @@ cmake .. -DUSE_CUDA=ON
 
 ---
 
-Este README proporciona una guía completa para entender, compilar y ejecutar el clasificador Fashion-MNIST con Vision Transformer, cubriendo tanto la implementación CPU como la aceleración GPU con kernels CUDA optimizados.
