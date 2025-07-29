@@ -259,3 +259,117 @@ void MultiHeadAttention::clip_gradients(double max_norm) {
     grad_v.clip(max_norm);
     grad_o.clip(max_norm);
 }
+
+
+
+// ============================================================================
+// FEED FORWARD IMPLEMENTATION
+// ============================================================================
+
+FeedForward::FeedForward(int d_model, int d_ff) : d_model(d_model), d_ff(d_ff) {
+    W1 = Matrix(d_model, d_ff);
+    W2 = Matrix(d_ff, d_model);
+    b1 = Matrix(1, d_ff);
+    b2 = Matrix(1, d_model);
+    
+    W1.xavier_init();
+    W2.xavier_init();
+    b1.zero();
+    b2.zero();
+    
+    grad_1 = Gradients(d_model, d_ff);
+    grad_2 = Gradients(d_ff, d_model);
+}
+
+Matrix FeedForward::forward(const Matrix& input) {
+    input_cache = input;
+    
+    // First linear layer
+    Matrix hidden = input * W1;
+    
+    // Add bias
+    for (int i = 0; i < hidden.rows; i++) {
+        for (int j = 0; j < hidden.cols; j++) {
+            hidden.data[i][j] += b1.data[0][j];
+        }
+    }
+    
+    // ReLU activation
+    hidden = hidden.relu();
+    hidden_cache = hidden;
+    
+    // Second linear layer
+    Matrix output = hidden * W2;
+    
+    // Add bias
+    for (int i = 0; i < output.rows; i++) {
+        for (int j = 0; j < output.cols; j++) {
+            output.data[i][j] += b2.data[0][j];
+        }
+    }
+    
+    return output;
+}
+
+Matrix FeedForward::backward(const Matrix& grad_output) {
+    // Gradient w.r.t second layer
+    Matrix grad_hidden = grad_output * W2.transpose();
+    
+    // Second layer weight and bias gradients
+    grad_2.dW.add_inplace(hidden_cache.transpose() * grad_output);
+    for (int j = 0; j < grad_output.cols; j++) {
+        double bias_grad = 0.0;
+        for (int i = 0; i < grad_output.rows; i++) {
+            bias_grad += grad_output.data[i][j];
+        }
+        grad_2.db.data[0][j] += bias_grad;
+    }
+    
+    // ReLU backward
+    for (int i = 0; i < grad_hidden.rows; i++) {
+        for (int j = 0; j < grad_hidden.cols; j++) {
+            if (hidden_cache.data[i][j] <= 0) {
+                grad_hidden.data[i][j] = 0.0;
+            }
+        }
+    }
+    
+    // First layer gradients
+    Matrix grad_input = grad_hidden * W1.transpose();
+    
+    // First layer weight and bias gradients
+    grad_1.dW.add_inplace(input_cache.transpose() * grad_hidden);
+    for (int j = 0; j < grad_hidden.cols; j++) {
+        double bias_grad = 0.0;
+        for (int i = 0; i < grad_hidden.rows; i++) {
+            bias_grad += grad_hidden.data[i][j];
+        }
+        grad_1.db.data[0][j] += bias_grad;
+    }
+    
+    return grad_input;
+}
+
+void FeedForward::update_weights(double learning_rate) {
+    W1.subtract_inplace(grad_1.dW * learning_rate);
+    W2.subtract_inplace(grad_2.dW * learning_rate);
+    b1.subtract_inplace(grad_1.db * learning_rate);
+    b2.subtract_inplace(grad_2.db * learning_rate);
+}
+
+void FeedForward::update_weights_adam(AdamOptimizer& optimizer, int step) {
+    optimizer.update(W1, grad_1.dW, &W1, step, 0.001);
+    optimizer.update(W2, grad_2.dW, &W2, step, 0.001);
+    optimizer.update(b1, grad_1.db, &b1, step, 0.001);
+    optimizer.update(b2, grad_2.db, &b2, step, 0.001);
+}
+
+void FeedForward::zero_gradients() {
+    grad_1.zero();
+    grad_2.zero();
+}
+
+void FeedForward::clip_gradients(double max_norm) {
+    grad_1.clip(max_norm);
+    grad_2.clip(max_norm);
+}
