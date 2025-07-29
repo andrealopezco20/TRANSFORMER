@@ -486,3 +486,5 @@ void LayerNorm::zero_gradients() {
     grad_gamma.zero();
     grad_beta.zero();
 }
+
+
