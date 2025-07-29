@@ -1,5 +1,17 @@
 # Clasificador Fashion-MNIST con Vision Transformer en C++
 
+## Integrantes
+
+- **Jharold Mayorga Villena**
+- **Andrea del Rosario Lopez Condori**
+- **Luciana Julissa Huamán Coaquira**
+- **Javier Wilber Quispe Rojas**
+
+## Documentación
+
+Puedes ver la documentación completa aquí: [documentacion.pdf](./Proyecto_final_IA_VitTransformer.pdf)
+
+ 
 ## Índice
 1. [Dataset Fashion-MNIST](#dataset-fashion-mnist)
 2. [Arquitectura Vision Transformer (ViT)](#arquitectura-vision-transformer-vit)
