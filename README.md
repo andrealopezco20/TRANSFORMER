@@ -4,7 +4,7 @@
 
 - **Jharold Mayorga Villena**
 - **Andrea del Rosario Lopez Condori**
-- **Luciana Julissa Huamán Coaquira**
+- **Luciana Julissa Huaman Coaquira**
 - **Javier Wilber Quispe Rojas**
 
 ## Documentación
