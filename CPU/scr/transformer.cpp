@@ -488,3 +488,116 @@ void LayerNorm::zero_gradients() {
 }
 
 
+
+
+// ============================================================================
+// TRANSFORMER ENCODER LAYER IMPLEMENTATION
+// ============================================================================
+
+TransformerEncoderLayer::TransformerEncoderLayer(int d_model, int num_heads, int d_ff, double dropout_rate)
+    : dropout_rate(dropout_rate) {
+    
+    attention = std::make_unique<MultiHeadAttention>(d_model, num_heads);
+    feed_forward = std::make_unique<FeedForward>(d_model, d_ff);
+    norm1 = std::make_unique<LayerNorm>(d_model);
+    norm2 = std::make_unique<LayerNorm>(d_model);
+}
+
+Matrix TransformerEncoderLayer::forward(const Matrix& input, bool training) {
+    input_cache = input;
+    
+    // Self-attention with residual connection and layer norm
+    Matrix attention_out = attention->forward(input, input, input, false);
+    attention_out_cache = attention_out;
+    
+    Matrix residual1 = input + attention_out;
+    Matrix norm1_out = norm1->forward(residual1);
+    norm1_out_cache = norm1_out;
+    
+    // Feed forward with residual connection and layer norm
+    Matrix ff_out = feed_forward->forward(norm1_out);
+    ff_out_cache = ff_out;
+    
+    Matrix residual2 = norm1_out + ff_out;
+    Matrix output = norm2->forward(residual2);
+    
+    return output;
+}
+
+Matrix TransformerEncoderLayer::backward(const Matrix& grad_output) {
+    // Backward through second layer norm
+    Matrix grad_residual2 = norm2->backward(grad_output);
+    
+    // Split gradient for residual connection
+    Matrix grad_norm1_out = grad_residual2;
+    Matrix grad_ff_out = grad_residual2;
+    
+    // Backward through feed forward
+    Matrix grad_ff_input = feed_forward->backward(grad_ff_out);
+    grad_norm1_out.add_inplace(grad_ff_input);
+    
+    // Backward through first layer norm
+    Matrix grad_residual1 = norm1->backward(grad_norm1_out);
+    
+    // Split gradient for residual connection
+    Matrix grad_input = grad_residual1;
+    Matrix grad_attention_out = grad_residual1;
+    
+    // Backward through attention - CORREGIDO
+    std::tuple<Matrix, Matrix, Matrix> grad_result = attention->backward(grad_attention_out);
+    Matrix grad_q = std::get<0>(grad_result);
+    Matrix grad_k = std::get<1>(grad_result);
+    Matrix grad_v = std::get<2>(grad_result);
+    
+    grad_input.add_inplace(grad_q); // Assuming query, key, value are all input
+    
+    return grad_input;
+}
+
+void TransformerEncoderLayer::update_weights(double learning_rate) {
+    attention->update_weights(learning_rate);
+    feed_forward->update_weights(learning_rate);
+    norm1->update_weights(learning_rate);
+    norm2->update_weights(learning_rate);
+}
+
+void TransformerEncoderLayer::update_weights_adam(AdamOptimizer& optimizer, int step) {
+    attention->update_weights_adam(optimizer, step);
+    feed_forward->update_weights_adam(optimizer, step);
+    norm1->update_weights_adam(optimizer, step);
+    norm2->update_weights_adam(optimizer, step);
+}
+
+void TransformerEncoderLayer::zero_gradients() {
+    attention->zero_gradients();
+    feed_forward->zero_gradients();
+    norm1->zero_gradients();
+    norm2->zero_gradients();
+}
+
+void TransformerEncoderLayer::clip_gradients(double max_norm) {
+    attention->clip_gradients(max_norm);
+    feed_forward->clip_gradients(max_norm);
+}
+
+void TransformerEncoderLayer::scale_gradients(double scale_factor) {
+    attention->grad_q.dW.multiply_inplace(scale_factor);
+    attention->grad_k.dW.multiply_inplace(scale_factor);
+    attention->grad_v.dW.multiply_inplace(scale_factor);
+    attention->grad_o.dW.multiply_inplace(scale_factor);
+    
+    attention->grad_q.db.multiply_inplace(scale_factor);
+    attention->grad_k.db.multiply_inplace(scale_factor);
+    attention->grad_v.db.multiply_inplace(scale_factor);
+    attention->grad_o.db.multiply_inplace(scale_factor);
+    
+    feed_forward->grad_1.dW.multiply_inplace(scale_factor);
+    feed_forward->grad_2.dW.multiply_inplace(scale_factor);
+    feed_forward->grad_1.db.multiply_inplace(scale_factor);
+    feed_forward->grad_2.db.multiply_inplace(scale_factor);
+    
+    norm1->grad_gamma.multiply_inplace(scale_factor);
+    norm1->grad_beta.multiply_inplace(scale_factor);
+    norm2->grad_gamma.multiply_inplace(scale_factor);
+    norm2->grad_beta.multiply_inplace(scale_factor);
+}
